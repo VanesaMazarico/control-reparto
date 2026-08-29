@@ -1021,13 +1021,47 @@ function Totales({ totals, loading, pedidos }) {
   );
 }
 
-/* ==================== HISTORIAL ==================== */
+/* ==================== HISTORIAL (con filtros) ==================== */
 function Historial({ pedidos, loading, onDelete, onUpdate, onToast }) {
   const [expanded, setExpanded] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [editingId, setEditingId] = useState(null);
   const [editItems, setEditItems] = useState([]);
   const [saving, setSaving] = useState(false);
+
+  const [filterLocal, setFilterLocal] = useState("Todos");
+  const [filterProducto, setFilterProducto] = useState("");
+  const [dateMode, setDateMode] = useState("todos"); // todos | dia | mes | rango
+  const [filterDia, setFilterDia] = useState("");
+  const [filterMes, setFilterMes] = useState("");
+  const [filterDesde, setFilterDesde] = useState("");
+  const [filterHasta, setFilterHasta] = useState("");
+
+  const filteredPedidos = useMemo(() => {
+    return pedidos.filter((p) => {
+      if (filterLocal !== "Todos" && p.local !== filterLocal) return false;
+      if (filterProducto.trim()) {
+        const q = filterProducto.trim().toLowerCase();
+        const hasProduct = (p.items || []).some((it) => it.name.toLowerCase().includes(q));
+        if (!hasProduct) return false;
+      }
+      if (dateMode === "dia" && filterDia) {
+        if (p.fecha !== filterDia) return false;
+      } else if (dateMode === "mes" && filterMes) {
+        if (!p.fecha || !p.fecha.startsWith(filterMes)) return false;
+      } else if (dateMode === "rango") {
+        if (filterDesde && p.fecha < filterDesde) return false;
+        if (filterHasta && p.fecha > filterHasta) return false;
+      }
+      return true;
+    });
+  }, [pedidos, filterLocal, filterProducto, dateMode, filterDia, filterMes, filterDesde, filterHasta]);
+
+  const filtersActive = filterLocal !== "Todos" || filterProducto.trim() || dateMode !== "todos";
+  const clearFilters = () => {
+    setFilterLocal("Todos"); setFilterProducto(""); setDateMode("todos");
+    setFilterDia(""); setFilterMes(""); setFilterDesde(""); setFilterHasta("");
+  };
 
   const startEdit = (p) => {
     setEditingId(p.id);
@@ -1052,12 +1086,50 @@ function Historial({ pedidos, loading, onDelete, onUpdate, onToast }) {
 
   return (
     <div>
-      <Section title={`Pedidos cargados${pedidos.length ? ` · ${pedidos.length}` : ""}`}>
-        {loading ? <EmptyState icon={Loader2} text="Cargando historial…" spin /> : pedidos.length === 0 ? (
-          <EmptyState icon={History} text="Todavía no se cargó ningún pedido." />
+      <Section title="Filtros" right={filtersActive && (
+        <button onClick={clearFilters} style={{ fontSize: 12, color: COLORS.danger, background: "none", border: "none", fontWeight: 700 }}>Limpiar filtros</button>
+      )}>
+        <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.line}`, borderRadius: 12, padding: 14, display: "grid", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 12, color: "#7C7461", fontWeight: 600, marginBottom: 6 }}>Local</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {["Todos", ...LOCALES].map((l) => (
+                <button key={l} onClick={() => setFilterLocal(l)} style={{ padding: "6px 12px", borderRadius: 20, border: `1.5px solid ${filterLocal === l ? COLORS.teal : COLORS.line}`, background: filterLocal === l ? COLORS.teal : "#fff", color: filterLocal === l ? "#fff" : COLORS.ink, fontSize: 12, fontWeight: 700 }}>{l}</button>
+              ))}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: "#7C7461", fontWeight: 600, marginBottom: 6 }}>Producto</div>
+            <div style={{ position: "relative" }}>
+              <Search size={15} style={{ position: "absolute", left: 9, top: 10, color: "#9A937F" }} />
+              <input value={filterProducto} onChange={(e) => setFilterProducto(e.target.value)} placeholder="Buscar por producto…" style={{ width: "100%", padding: "8px 9px 8px 30px", borderRadius: 8, border: `1px solid ${COLORS.line}`, fontSize: 13 }} />
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 12, color: "#7C7461", fontWeight: 600, marginBottom: 6 }}>Fecha</div>
+            <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
+              {[["todos", "Todas"], ["dia", "Día"], ["mes", "Mes"], ["rango", "Rango"]].map(([id, label]) => (
+                <button key={id} onClick={() => setDateMode(id)} style={{ padding: "6px 12px", borderRadius: 20, border: `1.5px solid ${dateMode === id ? COLORS.teal : COLORS.line}`, background: dateMode === id ? COLORS.teal : "#fff", color: dateMode === id ? "#fff" : COLORS.ink, fontSize: 12, fontWeight: 700 }}>{label}</button>
+              ))}
+            </div>
+            {dateMode === "dia" && <input type="date" value={filterDia} onChange={(e) => setFilterDia(e.target.value)} style={{ padding: "8px 9px", borderRadius: 8, border: `1px solid ${COLORS.line}`, fontSize: 13 }} />}
+            {dateMode === "mes" && <input type="month" value={filterMes} onChange={(e) => setFilterMes(e.target.value)} style={{ padding: "8px 9px", borderRadius: 8, border: `1px solid ${COLORS.line}`, fontSize: 13 }} />}
+            {dateMode === "rango" && (
+              <div style={{ display: "flex", gap: 8 }}>
+                <input type="date" value={filterDesde} onChange={(e) => setFilterDesde(e.target.value)} style={{ flex: 1, padding: "8px 9px", borderRadius: 8, border: `1px solid ${COLORS.line}`, fontSize: 13 }} />
+                <input type="date" value={filterHasta} onChange={(e) => setFilterHasta(e.target.value)} style={{ flex: 1, padding: "8px 9px", borderRadius: 8, border: `1px solid ${COLORS.line}`, fontSize: 13 }} />
+              </div>
+            )}
+          </div>
+        </div>
+      </Section>
+
+      <Section title={`Pedidos${filtersActive ? " filtrados" : " cargados"}${filteredPedidos.length ? ` · ${filteredPedidos.length}` : ""}`}>
+        {loading ? <EmptyState icon={Loader2} text="Cargando historial…" spin /> : filteredPedidos.length === 0 ? (
+          <EmptyState icon={History} text={pedidos.length === 0 ? "Todavía no se cargó ningún pedido." : "No hay pedidos que coincidan con los filtros."} />
         ) : (
           <div style={{ display: "grid", gap: 8 }}>
-            {pedidos.map((p) => {
+            {filteredPedidos.map((p) => {
               const isOpen = expanded === p.id;
               const isEditing = editingId === p.id;
               const totalPedido = (p.items || []).reduce((s, it) => s + (Number(it.qty) || 0), 0);
@@ -1134,7 +1206,6 @@ function Historial({ pedidos, loading, onDelete, onUpdate, onToast }) {
     </div>
   );
 }
-
 /* ==================== PRODUCTOS ==================== */
 function ProductosManager({ catalog, categories, customArticles, onAdd, onDelete, onToast }) {
   const [name, setName] = useState("");
