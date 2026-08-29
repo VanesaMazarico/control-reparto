@@ -619,7 +619,13 @@ export default function App() {
   }, [vajillaConteo, vajillaHistorial, persistVajillaConteo, showToast]);
 
   const isAdmin = currentUser?.role === "admin";
+  const isOperador = currentUser?.role === "operador";
   const canViewAll = currentUser?.role === "admin" || currentUser?.role === "encargado";
+
+  const misPedidos = useMemo(
+    () => (currentUser ? pedidos.filter((p) => p.creadoPor === currentUser.username) : []),
+    [pedidos, currentUser]
+  );
 
   if (authLoading) {
     return (
@@ -641,14 +647,15 @@ export default function App() {
       `}</style>
       <Header username={currentUser.username} role={currentUser.role} onLogout={handleLogout} />
       <div style={{ maxWidth: 880, margin: "0 auto", padding: "0 14px 90px" }}>
-        {tab === "cargar" && <CargarPedido onSave={savePedido} onToast={showToast} catalog={fullCatalog} categories={fullCategories} />}
+        {tab === "cargar" && <CargarPedido onSave={savePedido} onToast={showToast} catalog={fullCatalog} categories={fullCategories} username={currentUser.username} />}
+        {tab === "mispedidos" && isOperador && <MisPedidos pedidos={misPedidos} loading={loadingPedidos} />}
+        {tab === "conteo" && (
+          <ConteoSandwiches conteo={conteo} historial={conteoHistorial} onAddFinding={addFinding} onDeleteFinding={deleteFinding} onReset={resetConteo} onToast={showToast} />
+        )}
         {tab === "totales" && canViewAll && <Totales totals={totals} loading={loadingPedidos} pedidos={pedidos} />}
         {tab === "historial" && canViewAll && <Historial pedidos={pedidos} loading={loadingPedidos} onDelete={deletePedido} onUpdate={updatePedido} onToast={showToast} />}
         {tab === "productos" && canViewAll && (
           <ProductosManager catalog={fullCatalog} categories={fullCategories} customArticles={customArticles} onAdd={addProduct} onDelete={deleteProduct} onToast={showToast} />
-        )}
-        {tab === "conteo" && canViewAll && (
-          <ConteoSandwiches conteo={conteo} historial={conteoHistorial} onAddFinding={addFinding} onDeleteFinding={deleteFinding} onReset={resetConteo} onToast={showToast} />
         )}
         {tab === "vajilla" && canViewAll && (
           <ConteoVajilla conteo={vajillaConteo} historial={vajillaHistorial} onAddFinding={addVajillaFinding} onDeleteFinding={deleteVajillaFinding} onReset={resetVajillaConteo} onToast={showToast} />
@@ -657,7 +664,7 @@ export default function App() {
           <AjustesUsuarios users={authUsers} currentUsername={currentUser.username} onAdd={addUser} onDelete={deleteUser} onToast={showToast} />
         )}
       </div>
-      <TabBar tab={tab} setTab={setTab} isAdmin={isAdmin} canViewAll={canViewAll} />
+      <TabBar tab={tab} setTab={setTab} isAdmin={isAdmin} isOperador={isOperador} canViewAll={canViewAll} />
       {toast && (
         <div key={toast.key} style={{ position: "fixed", left: "50%", bottom: 78, transform: "translateX(-50%)", background: toast.kind === "error" ? COLORS.danger : COLORS.teal, color: "#fff", padding: "10px 14px 10px 18px", borderRadius: 10, fontSize: 14, fontWeight: 600, boxShadow: "0 6px 18px rgba(0,0,0,0.18)", zIndex: 50, display: "flex", alignItems: "flex-start", gap: 8, maxWidth: "92%" }}>
           {toast.kind === "error" ? <AlertCircle size={16} style={{ flexShrink: 0, marginTop: 2 }} /> : <Check size={16} style={{ flexShrink: 0, marginTop: 2 }} />}
@@ -749,13 +756,14 @@ function Header({ username, role, onLogout }) {
   );
 }
 
-function TabBar({ tab, setTab, isAdmin, canViewAll }) {
+function TabBar({ tab, setTab, isAdmin, isOperador, canViewAll }) {
   const items = [{ id: "cargar", label: "Cargar", icon: ClipboardList }];
+  if (isOperador) items.push({ id: "mispedidos", label: "Mis pedidos", icon: History });
+  items.push({ id: "conteo", label: "Conteo", icon: Utensils });
   if (canViewAll) {
     items.push({ id: "totales", label: "Totales", icon: BarChart3 });
     items.push({ id: "historial", label: "Historial", icon: History });
     items.push({ id: "productos", label: "Productos", icon: Package });
-    items.push({ id: "conteo", label: "Conteo", icon: Utensils });
     items.push({ id: "vajilla", label: "Vajilla", icon: LayoutGrid });
   }
   if (isAdmin) items.push({ id: "ajustes", label: "Ajustes", icon: Settings });
@@ -787,7 +795,7 @@ function Section({ title, children, right }) {
 }
 
 /* ==================== CARGAR PEDIDO ==================== */
-function CargarPedido({ onSave, onToast, catalog, categories }) {
+function CargarPedido({ onSave, onToast, catalog, categories, username }) {
   const [local, setLocal] = useState(LOCALES[0]);
   const [fecha, setFecha] = useState(todayISO());
   const [turno, setTurno] = useState(TURNOS[0]);
@@ -818,7 +826,7 @@ function CargarPedido({ onSave, onToast, catalog, categories }) {
         const a = catalog.find((c) => c.id === id);
         return { category: a.category, name: a.name, qty, entregado: qty, motivo: "" };
       });
-      const record = { id: uid(), local, fecha, turno, timestamp: Date.now(), items };
+      const record = { id: uid(), local, fecha, turno, timestamp: Date.now(), items, creadoPor: username };
       await onSave(record);
       setQtys({});
       onToast(`Pedido guardado para ${local} (${items.length} artículos).`, "ok");
@@ -903,6 +911,57 @@ function ArticleRow({ article, qty, setQty }) {
         <input type="number" min="0" value={qty || ""} placeholder="0" onChange={(e) => setQty(e.target.value)} style={{ width: 40, textAlign: "center", padding: "5px 2px", borderRadius: 7, border: `1px solid ${COLORS.line}`, fontSize: 14, fontWeight: 700 }} />
         <button onClick={() => setQty(qty + 1)} style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: COLORS.teal, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={14} /></button>
       </div>
+    </div>
+  );
+}
+
+/* ==================== MIS PEDIDOS (operador, solo lectura) ==================== */
+function MisPedidos({ pedidos, loading }) {
+  const [expanded, setExpanded] = useState(null);
+  return (
+    <div>
+      <Section title={`Mis pedidos${pedidos.length ? ` · ${pedidos.length}` : ""}`}>
+        {loading ? <EmptyState icon={Loader2} text="Cargando…" spin /> : pedidos.length === 0 ? (
+          <EmptyState icon={History} text="Todavía no cargaste ningún pedido." />
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {pedidos.map((p) => {
+              const isOpen = expanded === p.id;
+              const totalEntregado = (p.items || []).reduce((s, it) => s + (Number(it.entregado ?? it.qty) || 0), 0);
+              const totalPedido = (p.items || []).reduce((s, it) => s + (Number(it.qty) || 0), 0);
+              const hayDiferencia = totalEntregado !== totalPedido;
+              return (
+                <div key={p.id} style={{ background: COLORS.panel, border: `1px solid ${COLORS.line}`, borderRadius: 10, overflow: "hidden" }}>
+                  <button onClick={() => setExpanded(isOpen ? null : p.id)} style={{ width: "100%", padding: "12px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "transparent", border: "none" }}>
+                    <div style={{ textAlign: "left" }}>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>{p.local}</div>
+                      <div style={{ fontSize: 12, color: "#7C7461" }}>{fmtDate(p.fecha)} · {p.turno} · {(p.items || []).length} artículos{hayDiferencia && <span style={{ color: COLORS.amber, fontWeight: 700 }}> · con ajustes del depósito</span>}</div>
+                    </div>
+                    <ChevronDown size={16} style={{ transform: isOpen ? "rotate(180deg)" : "none" }} />
+                  </button>
+                  {isOpen && (
+                    <div style={{ borderTop: `1px solid ${COLORS.line}`, padding: "6px 0" }}>
+                      {(p.items || []).map((it, idx) => {
+                        const entregado = it.entregado ?? it.qty;
+                        const changed = Number(entregado) !== Number(it.qty);
+                        return (
+                          <div key={idx} style={{ padding: "7px 14px", borderBottom: idx === (p.items || []).length - 1 ? "none" : `1px solid ${COLORS.line}` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                              <span>{it.name} <span style={{ color: "#9A937F", fontSize: 11 }}>· {it.category}</span></span>
+                              <span style={{ fontWeight: 700 }}>Pedido: {it.qty}</span>
+                            </div>
+                            {changed && <div style={{ fontSize: 11.5, color: COLORS.amber, marginTop: 3, display: "flex", gap: 6, alignItems: "flex-start" }}><AlertCircle size={13} style={{ flexShrink: 0, marginTop: 1 }} /><span>Entregado: <b>{entregado}</b> · Motivo: {it.motivo || "sin especificar"}</span></div>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Section>
     </div>
   );
 }
@@ -1009,7 +1068,7 @@ function Historial({ pedidos, loading, onDelete, onUpdate, onToast }) {
                   <button onClick={() => setExpanded(isOpen ? null : p.id)} style={{ width: "100%", padding: "12px 12px", display: "flex", justifyContent: "space-between", alignItems: "center", background: "transparent", border: "none" }}>
                     <div style={{ textAlign: "left" }}>
                       <div style={{ fontWeight: 700, fontSize: 14 }}>{p.local}</div>
-                      <div style={{ fontSize: 12, color: "#7C7461" }}>{fmtDate(p.fecha)} · {p.turno} · {(p.items || []).length} artículos · {totalEntregado} un.{hayDiferencia && <span style={{ color: COLORS.amber, fontWeight: 700 }}> · con ajustes</span>}</div>
+                      <div style={{ fontSize: 12, color: "#7C7461" }}>{fmtDate(p.fecha)} · {p.turno} · {(p.items || []).length} artículos · {totalEntregado} un.{hayDiferencia && <span style={{ color: COLORS.amber, fontWeight: 700 }}> · con ajustes</span>}{p.creadoPor && <span style={{ color: "#9A937F" }}> · por {p.creadoPor}</span>}</div>
                     </div>
                     <ChevronDown size={16} style={{ transform: isOpen ? "rotate(180deg)" : "none" }} />
                   </button>
@@ -1422,7 +1481,7 @@ function AjustesUsuarios({ users, currentUsername, onAdd, onDelete, onToast }) {
               <button type="button" onClick={() => setShowPw((v) => !v)} style={{ position: "absolute", right: 8, top: 7, background: "none", border: "none", color: "#9A937F" }}>{showPw ? <EyeOff size={16} /> : <Eye size={16} />}</button>
             </div>
             <select value={role} onChange={(e) => setRole(e.target.value)} style={{ padding: "9px 10px", borderRadius: 8, border: `1px solid ${COLORS.line}`, fontSize: 14, background: "#fff" }}>
-              <option value="operador">Operador (solo carga pedidos)</option>
+              <option value="operador">Operador (carga pedidos)</option>
               <option value="encargado">Encargado de depósito (ve todo)</option>
               <option value="admin">Administrador (ve todo + gestiona usuarios)</option>
             </select>
