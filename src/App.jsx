@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   ClipboardList, BarChart3, History, Search, Plus, Minus, Loader2, Trash2,
   ChevronDown, Check, X, AlertCircle, PackageCheck, Lock, LogOut, Settings,
-  UserPlus, Eye, EyeOff, ShieldCheck, Package, Utensils, LayoutGrid,
+  UserPlus, Eye, EyeOff, ShieldCheck, Package, Utensils, LayoutGrid, Pencil,
 } from "lucide-react";
 import { storage } from "./lib/storage";
 
@@ -164,6 +164,7 @@ const LOCAL_ABBR = { "Mi Sándwich": "MS", "Bendito": "BD", "Cocina": "CO" };
 const TURNOS = ["Mañana", "Tarde", "Noche"];
 const USERS_KEY = "auth:users";
 const CATALOG_KEY = "catalog:custom";
+const MEDIDAS_KEY = "catalog:medidas";
 const COUNT_KEY = "conteo:sandwiches";
 const COUNT_HISTORY_KEY = "conteo:historial";
 const VAJILLA_COUNT_KEY = "conteo:vajilla";
@@ -342,6 +343,7 @@ export default function App() {
   const [pedidos, setPedidos] = useState([]);
   const [loadingPedidos, setLoadingPedidos] = useState(true);
   const [customArticles, setCustomArticles] = useState([]);
+  const [medidasOverrides, setMedidasOverrides] = useState({});
   const [conteo, setConteo] = useState({});
   const [conteoHistorial, setConteoHistorial] = useState([]);
   const [vajillaConteo, setVajillaConteo] = useState({});
@@ -393,6 +395,16 @@ export default function App() {
     } catch (e) {}
   }, []);
 
+  const loadMedidas = useCallback(async () => {
+    try {
+      const r = await storage.get(MEDIDAS_KEY);
+      if (r?.value) {
+        const obj = JSON.parse(r.value);
+        if (obj && typeof obj === "object") setMedidasOverrides(obj);
+      }
+    } catch (e) {}
+  }, []);
+
   const loadConteo = useCallback(async () => {
     try {
       const r = await storage.get(COUNT_KEY);
@@ -421,6 +433,7 @@ export default function App() {
   useEffect(() => {
     loadAuthUsers();
     loadCustomArticles();
+    loadMedidas();
     loadConteo();
     loadConteoHistorial();
     loadVajillaConteo();
@@ -464,9 +477,6 @@ export default function App() {
     persistUsers(next);
   }, [authUsers, persistUsers]);
 
-  const fullCatalog = useMemo(() => [...CATALOG, ...customArticles], [customArticles]);
-  const fullCategories = useMemo(() => [...new Set(fullCatalog.map((a) => a.category))], [fullCatalog]);
-
   const persistCustomArticles = useCallback((list) => {
     setCustomArticles(list);
     persistWithRetry(CATALOG_KEY, JSON.stringify(list)).catch((err) =>
@@ -475,19 +485,43 @@ export default function App() {
     return { persisted: true };
   }, [showToast]);
 
-  const addProduct = useCallback(async (name, category) => {
+  const addProduct = useCallback(async (name, category, medida) => {
     const cleanName = name.trim();
     const cleanCategory = category.trim();
     if (!cleanName || !cleanCategory) throw new Error("Faltan datos");
-    if (fullCatalog.some((a) => a.name.toLowerCase() === cleanName.toLowerCase() && a.category.toLowerCase() === cleanCategory.toLowerCase())) {
+    if ([...CATALOG, ...customArticles].some((a) => a.name.toLowerCase() === cleanName.toLowerCase() && a.category.toLowerCase() === cleanCategory.toLowerCase())) {
       throw new Error("Ese producto ya existe en esa categoría");
     }
-    return persistCustomArticles([...customArticles, { id: `c_${uid()}`, category: cleanCategory, name: cleanName }]);
-  }, [fullCatalog, customArticles, persistCustomArticles]);
+    const newItem = { id: `c_${uid()}`, category: cleanCategory, name: cleanName };
+    if (medida && medida.trim()) newItem.medida = medida.trim();
+    return persistCustomArticles([...customArticles, newItem]);
+  }, [customArticles, persistCustomArticles]);
 
   const deleteProduct = useCallback(async (id) => {
     return persistCustomArticles(customArticles.filter((a) => a.id !== id));
   }, [customArticles, persistCustomArticles]);
+
+  const persistMedidas = useCallback((next) => {
+    setMedidasOverrides(next);
+    persistWithRetry(MEDIDAS_KEY, JSON.stringify(next)).catch((err) =>
+      showToast(`La medida quedó guardada, pero no se pudo sincronizar: ${err.message}`, "error")
+    );
+    return { persisted: true };
+  }, [showToast]);
+
+  const setMedida = useCallback(async (id, medida) => {
+    const next = { ...medidasOverrides };
+    const clean = (medida || "").trim();
+    if (clean) next[id] = clean; else delete next[id];
+    return persistMedidas(next);
+  }, [medidasOverrides, persistMedidas]);
+
+  const fullCatalog = useMemo(() => {
+    return [...CATALOG, ...customArticles].map((a) =>
+      medidasOverrides[a.id] !== undefined ? { ...a, medida: medidasOverrides[a.id] } : a
+    );
+  }, [customArticles, medidasOverrides]);
+  const fullCategories = useMemo(() => [...new Set(fullCatalog.map((a) => a.category))], [fullCatalog]);
 
   const loadPedidos = useCallback(async () => {
     setLoadingPedidos(true);
@@ -655,7 +689,7 @@ export default function App() {
         {tab === "totales" && canViewAll && <Totales totals={totals} loading={loadingPedidos} pedidos={pedidos} />}
         {tab === "historial" && canViewAll && <Historial pedidos={pedidos} loading={loadingPedidos} onDelete={deletePedido} onUpdate={updatePedido} onToast={showToast} />}
         {tab === "productos" && canViewAll && (
-          <ProductosManager catalog={fullCatalog} categories={fullCategories} customArticles={customArticles} onAdd={addProduct} onDelete={deleteProduct} onToast={showToast} />
+          <ProductosManager catalog={fullCatalog} categories={fullCategories} customArticles={customArticles} onAdd={addProduct} onDelete={deleteProduct} onSetMedida={setMedida} onToast={showToast} />
         )}
         {tab === "vajilla" && canViewAll && (
           <ConteoVajilla conteo={vajillaConteo} historial={vajillaHistorial} onAddFinding={addVajillaFinding} onDeleteFinding={deleteVajillaFinding} onReset={resetVajillaConteo} onToast={showToast} />
@@ -1031,7 +1065,7 @@ function Historial({ pedidos, loading, onDelete, onUpdate, onToast }) {
 
   const [filterLocal, setFilterLocal] = useState("Todos");
   const [filterProducto, setFilterProducto] = useState("");
-  const [dateMode, setDateMode] = useState("todos"); // todos | dia | mes | rango
+  const [dateMode, setDateMode] = useState("todos");
   const [filterDia, setFilterDia] = useState("");
   const [filterMes, setFilterMes] = useState("");
   const [filterDesde, setFilterDesde] = useState("");
@@ -1206,22 +1240,29 @@ function Historial({ pedidos, loading, onDelete, onUpdate, onToast }) {
     </div>
   );
 }
-/* ==================== PRODUCTOS ==================== */
-function ProductosManager({ catalog, categories, customArticles, onAdd, onDelete, onToast }) {
+
+/* ==================== PRODUCTOS (agregar + medidas) ==================== */
+function ProductosManager({ catalog, categories, customArticles, onAdd, onDelete, onSetMedida, onToast }) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState(categories[0] || "");
   const [newCategory, setNewCategory] = useState("");
   const [usingNewCategory, setUsingNewCategory] = useState(false);
+  const [medida, setMedidaInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const [medidaSearch, setMedidaSearch] = useState("");
+  const [editingMedidaId, setEditingMedidaId] = useState(null);
+  const [medidaEditValue, setMedidaEditValue] = useState("");
+  const [savingMedida, setSavingMedida] = useState(false);
 
   const submit = async () => {
     const finalCategory = usingNewCategory ? newCategory : category;
     if (!name.trim() || !finalCategory.trim()) { onToast("Completá el nombre y la categoría del producto.", "error"); return; }
     setSaving(true);
     try {
-      const result = await onAdd(name, finalCategory);
-      setName("");
+      const result = await onAdd(name, finalCategory, medida);
+      setName(""); setMedidaInput("");
       if (usingNewCategory) { setCategory(finalCategory.trim()); setUsingNewCategory(false); setNewCategory(""); }
       onToast(result?.persisted ? `Producto "${name.trim()}" agregado a "${finalCategory.trim()}".` : "Producto agregado solo por ahora, revisá la sincronización.", result?.persisted ? "ok" : "error");
     } catch (err) {
@@ -1243,6 +1284,23 @@ function ProductosManager({ catalog, categories, customArticles, onAdd, onDelete
     return g;
   }, [customArticles]);
 
+  const filteredForMedida = useMemo(() => {
+    const q = medidaSearch.trim().toLowerCase();
+    return [...catalog].filter((a) => !q || a.name.toLowerCase().includes(q)).sort((a, b) => a.name.localeCompare(b.name, "es"));
+  }, [catalog, medidaSearch]);
+
+  const startEditMedida = (item) => { setEditingMedidaId(item.id); setMedidaEditValue(item.medida || ""); };
+  const saveEditMedida = async (id) => {
+    setSavingMedida(true);
+    try {
+      const result = await onSetMedida(id, medidaEditValue);
+      setEditingMedidaId(null);
+      onToast(result?.persisted ? "Medida actualizada." : "Se guardó solo para esta sesión, revisá la sincronización.", result?.persisted ? "ok" : "error");
+    } catch (err) {
+      onToast(err.message || "No se pudo guardar la medida.", "error");
+    } finally { setSavingMedida(false); }
+  };
+
   return (
     <div>
       <Section title="Agregar producto nuevo">
@@ -1263,10 +1321,64 @@ function ProductosManager({ catalog, categories, customArticles, onAdd, onDelete
                 <button onClick={() => { setUsingNewCategory(false); setNewCategory(""); }} style={{ textAlign: "left", background: "none", border: "none", color: "#7C7461", fontSize: 12, fontWeight: 700, padding: "2px 0" }}>Usar una categoría existente</button>
               </div>
             )}
+            <input value={medida} onChange={(e) => setMedidaInput(e.target.value)} placeholder="Unidad de medida (opcional, ej: 16 un, 1 botella, 100 g)" style={{ padding: "9px 10px", borderRadius: 8, border: `1px solid ${COLORS.line}`, fontSize: 14 }} />
             <button onClick={submit} disabled={saving} style={{ padding: "10px", borderRadius: 9, border: "none", background: COLORS.amber, color: "#1C2B2A", fontWeight: 700, fontSize: 13, opacity: saving ? 0.7 : 1 }}>{saving ? "Guardando…" : "Agregar producto"}</button>
           </div>
         </div>
       </Section>
+
+      <Section title="Unidad de medida de los productos">
+        <div style={{ fontSize: 12, color: "#9A937F", marginBottom: 8 }}>
+          Buscá cualquier producto (del catálogo base o agregado por vos) y ponele o cambiale la medida — se va a ver debajo del nombre al cargar pedidos.
+        </div>
+        <div style={{ position: "relative", marginBottom: 10 }}>
+          <Search size={16} style={{ position: "absolute", left: 10, top: 11, color: "#9A937F" }} />
+          <input value={medidaSearch} onChange={(e) => setMedidaSearch(e.target.value)} placeholder="Buscar producto…" style={{ width: "100%", padding: "9px 10px 9px 32px", borderRadius: 9, border: `1px solid ${COLORS.line}`, fontSize: 14 }} />
+        </div>
+        {medidaSearch.trim() === "" ? (
+          <div style={{ fontSize: 12.5, color: "#9A937F", padding: "10px 2px" }}>Escribí para buscar entre los {catalog.length} productos del catálogo.</div>
+        ) : filteredForMedida.length === 0 ? (
+          <EmptyState icon={Search} text="No hay productos que coincidan." />
+        ) : (
+          <div style={{ background: COLORS.panel, border: `1px solid ${COLORS.line}`, borderRadius: 10, overflow: "hidden" }}>
+            {filteredForMedida.slice(0, 40).map((item, i) => {
+              const isEditing = editingMedidaId === item.id;
+              return (
+                <div key={item.id} style={{ padding: "9px 12px", borderTop: i === 0 ? "none" : `1px solid ${COLORS.line}` }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13.5 }}>{item.name}</div>
+                      <div style={{ fontSize: 10.5, color: "#9A937F" }}>{item.category}{item.medida && !isEditing ? ` · ${item.medida}` : ""}</div>
+                    </div>
+                    {!isEditing && (
+                      <button onClick={() => startEditMedida(item)} style={{ background: "none", border: "none", color: COLORS.teal, display: "flex", alignItems: "center", gap: 4, fontSize: 12, fontWeight: 700 }}>
+                        <Pencil size={14} /> {item.medida ? "Editar" : "Agregar"}
+                      </button>
+                    )}
+                  </div>
+                  {isEditing && (
+                    <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                      <input
+                        autoFocus
+                        value={medidaEditValue}
+                        onChange={(e) => setMedidaEditValue(e.target.value)}
+                        placeholder="Ej: 16 un, 1 botella, 100 g"
+                        style={{ flex: 1, padding: "8px 9px", borderRadius: 7, border: `1px solid ${COLORS.line}`, fontSize: 13 }}
+                      />
+                      <button onClick={() => saveEditMedida(item.id)} disabled={savingMedida} style={{ padding: "8px 12px", borderRadius: 7, border: "none", background: COLORS.teal, color: "#fff", fontWeight: 700, fontSize: 12, opacity: savingMedida ? 0.7 : 1 }}>Guardar</button>
+                      <button onClick={() => setEditingMedidaId(null)} style={{ padding: "8px 10px", borderRadius: 7, border: `1px solid ${COLORS.line}`, background: "#fff", fontSize: 12 }}><X size={14} /></button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            {filteredForMedida.length > 40 && (
+              <div style={{ padding: "8px 12px", fontSize: 11.5, color: "#9A937F", borderTop: `1px solid ${COLORS.line}` }}>Mostrando los primeros 40 resultados. Afiná la búsqueda para ver otros.</div>
+            )}
+          </div>
+        )}
+      </Section>
+
       <Section title={`Productos agregados manualmente · ${customArticles.length}`}>
         {customArticles.length === 0 ? <EmptyState icon={Package} text="Todavía no agregaste productos nuevos." /> : (
           Object.entries(groupedCustom).map(([cat, items]) => (
@@ -1274,7 +1386,7 @@ function ProductosManager({ catalog, categories, customArticles, onAdd, onDelete
               <div style={{ padding: "9px 12px", background: COLORS.tealSoft, fontSize: 12, fontWeight: 700, color: COLORS.teal }}>{cat}</div>
               {items.map((a, i) => (
                 <div key={a.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderTop: i === 0 ? "none" : `1px solid ${COLORS.line}` }}>
-                  <span style={{ fontSize: 13.5 }}>{a.name}</span>
+                  <span style={{ fontSize: 13.5 }}>{a.name}{a.medida ? ` · ${a.medida}` : ""}</span>
                   {confirmDelete === a.id ? (
                     <div style={{ display: "flex", gap: 6 }}>
                       <button onClick={() => handleDelete(a.id, a.name)} style={{ padding: "6px 10px", borderRadius: 7, border: "none", background: COLORS.danger, color: "#fff", fontWeight: 700, fontSize: 11 }}>Confirmar</button>
