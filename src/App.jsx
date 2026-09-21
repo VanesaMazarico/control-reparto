@@ -165,6 +165,7 @@ const TURNOS = ["Mañana", "Tarde", "Noche"];
 const USERS_KEY = "auth:users";
 const CATALOG_KEY = "catalog:custom";
 const MEDIDAS_KEY = "catalog:medidas";
+const DECIMAL_KEY = "catalog:decimales";
 const COUNT_KEY = "conteo:sandwiches";
 const COUNT_HISTORY_KEY = "conteo:historial";
 const VAJILLA_COUNT_KEY = "conteo:vajilla";
@@ -316,6 +317,9 @@ function fmtDate(iso) {
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;
 }
+function roundToHalf(n) {
+  return Math.round(n * 2) / 2;
+}
 
 async function persistWithRetry(key, value) {
   let lastErr = null;
@@ -344,6 +348,7 @@ export default function App() {
   const [loadingPedidos, setLoadingPedidos] = useState(true);
   const [customArticles, setCustomArticles] = useState([]);
   const [medidasOverrides, setMedidasOverrides] = useState({});
+  const [decimalIds, setDecimalIds] = useState([]);
   const [conteo, setConteo] = useState({});
   const [conteoHistorial, setConteoHistorial] = useState([]);
   const [vajillaConteo, setVajillaConteo] = useState({});
@@ -405,6 +410,16 @@ export default function App() {
     } catch (e) {}
   }, []);
 
+  const loadDecimalIds = useCallback(async () => {
+    try {
+      const r = await storage.get(DECIMAL_KEY);
+      if (r?.value) {
+        const list = JSON.parse(r.value);
+        if (Array.isArray(list)) setDecimalIds(list);
+      }
+    } catch (e) {}
+  }, []);
+
   const loadConteo = useCallback(async () => {
     try {
       const r = await storage.get(COUNT_KEY);
@@ -434,6 +449,7 @@ export default function App() {
     loadAuthUsers();
     loadCustomArticles();
     loadMedidas();
+    loadDecimalIds();
     loadConteo();
     loadConteoHistorial();
     loadVajillaConteo();
@@ -516,11 +532,24 @@ export default function App() {
     return persistMedidas(next);
   }, [medidasOverrides, persistMedidas]);
 
-  const fullCatalog = useMemo(() => {
-    return [...CATALOG, ...customArticles].map((a) =>
-      medidasOverrides[a.id] !== undefined ? { ...a, medida: medidasOverrides[a.id] } : a
+  const toggleDecimal = useCallback(async (id, allow) => {
+    const set = new Set(decimalIds);
+    if (allow) set.add(id); else set.delete(id);
+    const next = [...set];
+    setDecimalIds(next);
+    persistWithRetry(DECIMAL_KEY, JSON.stringify(next)).catch((err) =>
+      showToast(`Se guardó en la app, pero no se pudo sincronizar: ${err.message}`, "error")
     );
-  }, [customArticles, medidasOverrides]);
+    return { persisted: true };
+  }, [decimalIds, showToast]);
+
+  const fullCatalog = useMemo(() => {
+    return [...CATALOG, ...customArticles].map((a) => ({
+      ...a,
+      medida: medidasOverrides[a.id] !== undefined ? medidasOverrides[a.id] : a.medida,
+      permiteDecimales: decimalIds.includes(a.id),
+    }));
+  }, [customArticles, medidasOverrides, decimalIds]);
   const fullCategories = useMemo(() => [...new Set(fullCatalog.map((a) => a.category))], [fullCatalog]);
 
   const loadPedidos = useCallback(async () => {
@@ -689,7 +718,7 @@ export default function App() {
         {tab === "totales" && canViewAll && <Totales totals={totals} loading={loadingPedidos} pedidos={pedidos} />}
         {tab === "historial" && canViewAll && <Historial pedidos={pedidos} loading={loadingPedidos} onDelete={deletePedido} onUpdate={updatePedido} onToast={showToast} />}
         {tab === "productos" && canViewAll && (
-          <ProductosManager catalog={fullCatalog} categories={fullCategories} customArticles={customArticles} onAdd={addProduct} onDelete={deleteProduct} onSetMedida={setMedida} onToast={showToast} />
+          <ProductosManager catalog={fullCatalog} categories={fullCategories} customArticles={customArticles} onAdd={addProduct} onDelete={deleteProduct} onSetMedida={setMedida} onToggleDecimal={toggleDecimal} onToast={showToast} />
         )}
         {tab === "vajilla" && canViewAll && (
           <ConteoVajilla conteo={vajillaConteo} historial={vajillaHistorial} onAddFinding={addVajillaFinding} onDeleteFinding={deleteVajillaFinding} onReset={resetVajillaConteo} onToast={showToast} />
@@ -838,9 +867,10 @@ function CargarPedido({ onSave, onToast, catalog, categories, username }) {
   const [openCats, setOpenCats] = useState(() => new Set([categories[0]]));
   const [saving, setSaving] = useState(false);
 
-  const setQty = (id, val) => {
-    const n = Math.max(0, Math.floor(Number(val) || 0));
-    setQtys((prev) => { const next = { ...prev }; if (n === 0) delete next[id]; else next[id] = n; return next; });
+  const setQty = (article, val) => {
+    const raw = Number(val) || 0;
+    const n = article.permiteDecimales ? Math.max(0, roundToHalf(raw)) : Math.max(0, Math.floor(raw));
+    setQtys((prev) => { const next = { ...prev }; if (n === 0) delete next[article.id]; else next[article.id] = n; return next; });
   };
   const toggleCat = (cat) => {
     setOpenCats((prev) => { const next = new Set(prev); if (next.has(cat)) next.delete(cat); else next.add(cat); return next; });
@@ -918,7 +948,7 @@ function CargarPedido({ onSave, onToast, catalog, categories, username }) {
               </button>
               {isOpen && (
                 <div style={{ borderTop: `1px solid ${COLORS.line}` }}>
-                  {list.map((a) => <ArticleRow key={a.id} article={a} qty={qtys[a.id] || 0} setQty={(v) => setQty(a.id, v)} />)}
+                  {list.map((a) => <ArticleRow key={a.id} article={a} qty={qtys[a.id] || 0} setQty={(v) => setQty(a, v)} />)}
                 </div>
               )}
             </div>
@@ -934,16 +964,17 @@ function CargarPedido({ onSave, onToast, catalog, categories, username }) {
 
 function ArticleRow({ article, qty, setQty }) {
   const active = qty > 0;
+  const step = article.permiteDecimales ? 0.5 : 1;
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "9px 12px", borderBottom: `1px solid ${COLORS.line}`, background: active ? COLORS.amberSoft : "transparent" }}>
       <span style={{ fontSize: 13.5, color: COLORS.ink, flex: 1, marginRight: 8 }}>
         {article.name}
-        {article.medida && <span style={{ display: "block", fontSize: 10.5, color: "#9A937F", fontWeight: 400 }}>x {article.medida} por unidad</span>}
+        {article.medida && <span style={{ display: "block", fontSize: 10.5, color: "#9A937F", fontWeight: 400 }}>x {article.medida} por unidad{article.permiteDecimales ? " · admite 0,5" : ""}</span>}
       </span>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <button onClick={() => setQty(Math.max(0, qty - 1))} style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${COLORS.line}`, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={14} /></button>
-        <input type="number" min="0" value={qty || ""} placeholder="0" onChange={(e) => setQty(e.target.value)} style={{ width: 40, textAlign: "center", padding: "5px 2px", borderRadius: 7, border: `1px solid ${COLORS.line}`, fontSize: 14, fontWeight: 700 }} />
-        <button onClick={() => setQty(qty + 1)} style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: COLORS.teal, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={14} /></button>
+        <button onClick={() => setQty(Math.max(0, qty - step))} style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${COLORS.line}`, background: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Minus size={14} /></button>
+        <input type="number" min="0" step={step} value={qty || ""} placeholder="0" onChange={(e) => setQty(e.target.value)} style={{ width: 48, textAlign: "center", padding: "5px 2px", borderRadius: 7, border: `1px solid ${COLORS.line}`, fontSize: 14, fontWeight: 700 }} />
+        <button onClick={() => setQty(qty + step)} style={{ width: 28, height: 28, borderRadius: 7, border: "none", background: COLORS.teal, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}><Plus size={14} /></button>
       </div>
     </div>
   );
@@ -1241,8 +1272,8 @@ function Historial({ pedidos, loading, onDelete, onUpdate, onToast }) {
   );
 }
 
-/* ==================== PRODUCTOS (agregar + medidas) ==================== */
-function ProductosManager({ catalog, categories, customArticles, onAdd, onDelete, onSetMedida, onToast }) {
+/* ==================== PRODUCTOS (agregar + medidas + decimales) ==================== */
+function ProductosManager({ catalog, categories, customArticles, onAdd, onDelete, onSetMedida, onToggleDecimal, onToast }) {
   const [name, setName] = useState("");
   const [category, setCategory] = useState(categories[0] || "");
   const [newCategory, setNewCategory] = useState("");
@@ -1301,6 +1332,15 @@ function ProductosManager({ catalog, categories, customArticles, onAdd, onDelete
     } finally { setSavingMedida(false); }
   };
 
+  const handleToggleDecimal = async (id, checked) => {
+    try {
+      const result = await onToggleDecimal(id, checked);
+      if (!result?.persisted) onToast("Se guardó solo para esta sesión, revisá la sincronización.", "error");
+    } catch (err) {
+      onToast(err.message || "No se pudo guardar.", "error");
+    }
+  };
+
   return (
     <div>
       <Section title="Agregar producto nuevo">
@@ -1327,9 +1367,9 @@ function ProductosManager({ catalog, categories, customArticles, onAdd, onDelete
         </div>
       </Section>
 
-      <Section title="Unidad de medida de los productos">
+      <Section title="Unidad de medida y cantidades en 0,5">
         <div style={{ fontSize: 12, color: "#9A937F", marginBottom: 8 }}>
-          Buscá cualquier producto (del catálogo base o agregado por vos) y ponele o cambiale la medida — se va a ver debajo del nombre al cargar pedidos.
+          Buscá cualquier producto (base o agregado por vos), ponele su medida, y tildá "permite 0,5" si querés poder pedirlo en medias unidades (ej: 0,5 = 50 g de un condimento).
         </div>
         <div style={{ position: "relative", marginBottom: 10 }}>
           <Search size={16} style={{ position: "absolute", left: 10, top: 11, color: "#9A937F" }} />
@@ -1369,6 +1409,15 @@ function ProductosManager({ catalog, categories, customArticles, onAdd, onDelete
                       <button onClick={() => setEditingMedidaId(null)} style={{ padding: "8px 10px", borderRadius: 7, border: `1px solid ${COLORS.line}`, background: "#fff", fontSize: 12 }}><X size={14} /></button>
                     </div>
                   )}
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, fontSize: 11.5, color: "#7C7461", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={!!item.permiteDecimales}
+                      onChange={(e) => handleToggleDecimal(item.id, e.target.checked)}
+                      style={{ width: 14, height: 14 }}
+                    />
+                    Permitir cantidades en 0,5 (ej: medio kilo)
+                  </label>
                 </div>
               );
             })}
