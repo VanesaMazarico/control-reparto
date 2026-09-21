@@ -830,6 +830,8 @@ function TabBar({ tab, setTab, isAdmin, isOperador, canViewAll }) {
     items.push({ id: "historial", label: "Historial", icon: History });
     items.push({ id: "productos", label: "Productos", icon: Package });
     items.push({ id: "vajilla", label: "Vajilla", icon: LayoutGrid });
+    items.push({ id: "menu", label: "Menú", icon: UtensilsCrossed });
+  }
   }
   if (isAdmin) items.push({ id: "ajustes", label: "Ajustes", icon: Settings });
   return (
