@@ -725,6 +725,7 @@ export default function App() {
         {tab === "vajilla" && canViewAll && (
           <ConteoVajilla conteo={vajillaConteo} historial={vajillaHistorial} onAddFinding={addVajillaFinding} onDeleteFinding={deleteVajillaFinding} onReset={resetVajillaConteo} onToast={showToast} />
         )}
+                {tab === "menu" && canViewAll && <MenuSemanal onToast={showToast} />}
         {tab === "ajustes" && isAdmin && (
           <AjustesUsuarios users={authUsers} currentUsername={currentUser.username} onAdd={addUser} onDelete={deleteUser} onToast={showToast} />
         )}
