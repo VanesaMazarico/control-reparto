@@ -2,9 +2,11 @@ import React, { useState, useEffect, useMemo, useCallback } from "react";
 import {
   ClipboardList, BarChart3, History, Search, Plus, Minus, Loader2, Trash2,
   ChevronDown, Check, X, AlertCircle, PackageCheck, Lock, LogOut, Settings,
-  UserPlus, Eye, EyeOff, ShieldCheck, Package, Utensils, LayoutGrid, Pencil,
+  UserPlus, Eye, EyeOff, ShieldCheck, Package, Utensils, LayoutGrid,   Pencil,
+  UtensilsCrossed,
 } from "lucide-react";
 import { storage } from "./lib/storage";
+import MenuSemanal from "./MenuSemanal";
 
 /* ==================== CATÁLOGO ==================== */
 const CATALOG = [
